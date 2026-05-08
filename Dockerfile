@@ -5,6 +5,9 @@ ARG GOSUMDB=sum.golang.org
 
 FROM ${GO_IMAGE} AS builder
 
+ARG GOPROXY=https://proxy.golang.org,direct
+ARG GOSUMDB=sum.golang.org
+
 ENV GOPROXY=${GOPROXY}
 ENV GOSUMDB=${GOSUMDB}
 
