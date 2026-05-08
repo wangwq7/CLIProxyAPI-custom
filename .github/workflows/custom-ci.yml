@@ -1,0 +1,35 @@
+name: custom-ci
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Refresh models catalog
+        run: |
+          git fetch --depth 1 https://github.com/router-for-me/models.git main
+          git show FETCH_HEAD:models.json > internal/registry/models/models.json
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test usage metadata paths
+        run: |
+          go test ./sdk/cliproxy/usage ./internal/runtime/executor/helps ./internal/redisqueue ./sdk/api/handlers
+
+      - name: Build server
+        run: go build -o test-output ./cmd/server
