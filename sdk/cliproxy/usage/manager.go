@@ -2,6 +2,7 @@ package usage
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,10 @@ type Record struct {
 	Latency     time.Duration
 	Failed      bool
 	Detail      Detail
+	ReasoningEffort string
+	ServiceTier     string
+	ClientApp       string
+	ClientUserAgent string
 }
 
 // Detail holds the token usage breakdown.
@@ -35,6 +40,13 @@ type Detail struct {
 }
 
 type requestedModelAliasContextKey struct{}
+type clientRequestMetadataContextKey struct{}
+
+// ClientRequestMetadata stores non-secret inbound request metadata needed by usage sinks.
+type ClientRequestMetadata struct {
+	RawJSON []byte
+	Headers http.Header
+}
 
 // WithRequestedModelAlias stores the client-requested model name for usage sinks.
 func WithRequestedModelAlias(ctx context.Context, alias string) context.Context {
@@ -62,6 +74,40 @@ func RequestedModelAliasFromContext(ctx context.Context) string {
 	default:
 		return ""
 	}
+}
+
+// WithClientRequestMetadata stores the original inbound request body and headers for usage sinks.
+func WithClientRequestMetadata(ctx context.Context, rawJSON []byte, headers http.Header) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	meta := ClientRequestMetadata{}
+	if len(rawJSON) > 0 {
+		meta.RawJSON = append([]byte(nil), rawJSON...)
+	}
+	if headers != nil {
+		meta.Headers = headers.Clone()
+	}
+	return context.WithValue(ctx, clientRequestMetadataContextKey{}, meta)
+}
+
+// ClientRequestMetadataFromContext returns inbound request metadata stored on ctx.
+func ClientRequestMetadataFromContext(ctx context.Context) ClientRequestMetadata {
+	if ctx == nil {
+		return ClientRequestMetadata{}
+	}
+	raw := ctx.Value(clientRequestMetadataContextKey{})
+	meta, ok := raw.(ClientRequestMetadata)
+	if !ok {
+		return ClientRequestMetadata{}
+	}
+	if len(meta.RawJSON) > 0 {
+		meta.RawJSON = append([]byte(nil), meta.RawJSON...)
+	}
+	if meta.Headers != nil {
+		meta.Headers = meta.Headers.Clone()
+	}
+	return meta
 }
 
 // Plugin consumes usage records emitted by the proxy runtime.

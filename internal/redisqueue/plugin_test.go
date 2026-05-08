@@ -85,6 +85,43 @@ func TestUsageQueuePluginPayloadIncludesStableFieldsAndFailureAndGinRequestID(t 
 	})
 }
 
+func TestUsageQueuePluginPayloadIncludesClientRequestMetadata(t *testing.T) {
+	withEnabledQueue(t, func() {
+		ctx := internallogging.WithRequestID(context.Background(), "ctx-request-id")
+		ctx = internallogging.WithEndpoint(ctx, "POST /v1/responses")
+		ctx = internallogging.WithResponseStatusHolder(ctx)
+		internallogging.SetResponseStatus(ctx, http.StatusOK)
+
+		plugin := &usageQueuePlugin{}
+		plugin.HandleUsage(ctx, coreusage.Record{
+			Provider:        "openai",
+			Model:           "gpt-5.4",
+			Alias:           "client-gpt",
+			APIKey:          "test-key",
+			AuthIndex:       "0",
+			AuthType:        "apikey",
+			Source:          "user@example.com",
+			RequestedAt:     time.Date(2026, 4, 25, 0, 0, 0, 0, time.UTC),
+			Latency:         1500 * time.Millisecond,
+			ReasoningEffort: "high",
+			ServiceTier:     "priority",
+			ClientApp:       "VS Code",
+			ClientUserAgent: "vscode-test/1.0",
+			Detail: coreusage.Detail{
+				InputTokens:  10,
+				OutputTokens: 20,
+				TotalTokens:  30,
+			},
+		})
+
+		payload := popSinglePayload(t)
+		requireStringField(t, payload, "reasoning_effort", "high")
+		requireStringField(t, payload, "service_tier", "priority")
+		requireStringField(t, payload, "client_app", "VS Code")
+		requireStringField(t, payload, "client_user_agent", "vscode-test/1.0")
+	})
+}
+
 func TestUsageQueuePluginAsyncIgnoresRecycledGinContext(t *testing.T) {
 	withEnabledQueue(t, func() {
 		ginCtx := newTestGinContext(t, http.MethodPost, "/v1/chat/completions", http.StatusOK)

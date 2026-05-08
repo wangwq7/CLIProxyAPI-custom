@@ -24,6 +24,10 @@ type UsageReporter struct {
 	authType    string
 	apiKey      string
 	source      string
+	reasoningEffort string
+	serviceTier     string
+	clientApp       string
+	clientUserAgent string
 	requestedAt time.Time
 	once        sync.Once
 }
@@ -43,6 +47,18 @@ func NewUsageReporter(ctx context.Context, provider, model string, auth *cliprox
 		source:      resolveUsageSource(auth, apiKey),
 		authType:    resolveUsageAuthType(auth),
 	}
+	requestMeta := usage.ClientRequestMetadataFromContext(ctx)
+	reporter.reasoningEffort = extractUsageReasoningEffort(requestMeta.RawJSON)
+	reporter.serviceTier = extractUsageServiceTier(requestMeta.RawJSON)
+	reporter.clientUserAgent = strings.TrimSpace(requestMeta.Headers.Get("User-Agent"))
+	reporter.clientApp = resolveUsageClientApp(
+		requestMeta.Headers.Get("X-CPA-Client-App"),
+		requestMeta.Headers.Get("X-Client-App"),
+		requestMeta.Headers.Get("X-App-Name"),
+		requestMeta.Headers.Get("X-Source-App"),
+		requestMeta.Headers.Get("X-Client-Name"),
+		reporter.clientUserAgent,
+	)
 	if auth != nil {
 		reporter.authID = auth.ID
 		reporter.authIndex = auth.EnsureIndex()
@@ -154,7 +170,11 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 		RequestedAt: r.requestedAt,
 		Latency:     r.latency(),
 		Failed:      failed,
-		Detail:      detail,
+		Detail:          detail,
+		ReasoningEffort: r.reasoningEffort,
+		ServiceTier:     r.serviceTier,
+		ClientApp:       r.clientApp,
+		ClientUserAgent: r.clientUserAgent,
 	}
 }
 
@@ -244,6 +264,96 @@ func resolveUsageAuthType(auth *cliproxyauth.Auth) string {
 		return "apikey"
 	}
 	return kind
+}
+
+func extractUsageReasoningEffort(rawJSON []byte) string {
+	if len(rawJSON) == 0 || !gjson.ValidBytes(rawJSON) {
+		return ""
+	}
+	root := gjson.ParseBytes(rawJSON)
+	for _, path := range []string{"reasoning_effort", "reasoning.effort", "request.reasoning_effort", "request.reasoning.effort"} {
+		if value := strings.TrimSpace(root.Get(path).String()); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func extractUsageServiceTier(rawJSON []byte) string {
+	if len(rawJSON) == 0 || !gjson.ValidBytes(rawJSON) {
+		return ""
+	}
+	root := gjson.ParseBytes(rawJSON)
+	for _, path := range []string{"service_tier", "request.service_tier"} {
+		if value := strings.TrimSpace(root.Get(path).String()); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func resolveUsageClientApp(explicitValues ...string) string {
+	userAgent := ""
+	for idx, raw := range explicitValues {
+		value := strings.TrimSpace(raw)
+		if value == "" {
+			continue
+		}
+		if idx == len(explicitValues)-1 {
+			userAgent = value
+			break
+		}
+		return normalizeUsageClientApp(value)
+	}
+	return inferUsageClientAppFromUserAgent(userAgent)
+}
+
+func normalizeUsageClientApp(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	lower := strings.ToLower(trimmed)
+	switch {
+	case strings.Contains(lower, "cursor"):
+		return "Cursor"
+	case strings.Contains(lower, "vscode") || strings.Contains(lower, "vs code") || strings.Contains(lower, "visual studio code"):
+		return "VS Code"
+	case strings.Contains(lower, "claude") && strings.Contains(lower, "desktop"):
+		return "Claude Desktop"
+	case strings.Contains(lower, "claude"):
+		return "Claude"
+	case strings.Contains(lower, "codex") && strings.Contains(lower, "desktop"):
+		return "Codex Desktop"
+	case strings.Contains(lower, "codex"):
+		return "Codex"
+	default:
+		return trimmed
+	}
+}
+
+func inferUsageClientAppFromUserAgent(userAgent string) string {
+	ua := strings.TrimSpace(userAgent)
+	if ua == "" {
+		return ""
+	}
+	lower := strings.ToLower(ua)
+	switch {
+	case strings.Contains(lower, "cursor"):
+		return "Cursor"
+	case strings.Contains(lower, "vscode") || strings.Contains(lower, "visualstudio") || strings.Contains(lower, "visual studio code"):
+		return "VS Code"
+	case strings.Contains(lower, "claude") && strings.Contains(lower, "desktop"):
+		return "Claude Desktop"
+	case strings.HasPrefix(lower, "claude-cli") || strings.Contains(lower, "claude-code"):
+		return "Claude Code"
+	case strings.Contains(lower, "codex") && strings.Contains(lower, "desktop"):
+		return "Codex Desktop"
+	case strings.Contains(lower, "codex"):
+		return "Codex"
+	default:
+		return ""
+	}
 }
 
 func ParseCodexUsage(data []byte) (usage.Detail, bool) {

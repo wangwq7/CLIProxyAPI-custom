@@ -2,6 +2,7 @@ package helps
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
@@ -118,6 +119,48 @@ func TestUsageReporterBuildRecordIncludesRequestedModelAlias(t *testing.T) {
 	}
 	if record.Alias != "client-gpt" {
 		t.Fatalf("alias = %q, want %q", record.Alias, "client-gpt")
+	}
+}
+
+func TestUsageReporterBuildRecordIncludesClientRequestMetadata(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("User-Agent", "cursor-agent/1.0")
+	ctx := usage.WithClientRequestMetadata(
+		context.Background(),
+		[]byte(`{"reasoning_effort":"high","service_tier":"priority"}`),
+		headers,
+	)
+	reporter := NewUsageReporter(ctx, "openai", "gpt-5.4", nil)
+
+	record := reporter.buildRecord(usage.Detail{TotalTokens: 3}, false)
+	if record.ReasoningEffort != "high" {
+		t.Fatalf("reasoning effort = %q, want high", record.ReasoningEffort)
+	}
+	if record.ServiceTier != "priority" {
+		t.Fatalf("service tier = %q, want priority", record.ServiceTier)
+	}
+	if record.ClientApp != "Cursor" {
+		t.Fatalf("client app = %q, want Cursor", record.ClientApp)
+	}
+	if record.ClientUserAgent != "cursor-agent/1.0" {
+		t.Fatalf("client user agent = %q, want cursor-agent/1.0", record.ClientUserAgent)
+	}
+}
+
+func TestUsageReporterBuildRecordReadsNestedCodexReasoningEffort(t *testing.T) {
+	ctx := usage.WithClientRequestMetadata(
+		context.Background(),
+		[]byte(`{"reasoning":{"effort":"low"},"service_tier":"flex"}`),
+		nil,
+	)
+	reporter := NewUsageReporter(ctx, "codex", "gpt-5.4", nil)
+
+	record := reporter.buildRecord(usage.Detail{TotalTokens: 3}, false)
+	if record.ReasoningEffort != "low" {
+		t.Fatalf("reasoning effort = %q, want low", record.ReasoningEffort)
+	}
+	if record.ServiceTier != "flex" {
+		t.Fatalf("service tier = %q, want flex", record.ServiceTier)
 	}
 }
 

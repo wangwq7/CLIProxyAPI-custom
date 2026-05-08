@@ -68,12 +68,16 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 	}
 
 	detail := requestDetail{
-		Timestamp: timestamp,
-		LatencyMs: record.Latency.Milliseconds(),
-		Source:    record.Source,
-		AuthIndex: record.AuthIndex,
-		Tokens:    tokens,
-		Failed:    failed,
+		Timestamp:       timestamp,
+		LatencyMs:       record.Latency.Milliseconds(),
+		Source:          record.Source,
+		AuthIndex:       record.AuthIndex,
+		ReasoningEffort: strings.TrimSpace(record.ReasoningEffort),
+		ServiceTier:     strings.TrimSpace(record.ServiceTier),
+		ClientApp:       strings.TrimSpace(record.ClientApp),
+		ClientUserAgent: strings.TrimSpace(record.ClientUserAgent),
+		Tokens:          tokens,
+		Failed:          failed,
 	}
 
 	payload, err := json.Marshal(queuedUsageDetail{
@@ -104,12 +108,16 @@ type queuedUsageDetail struct {
 }
 
 type requestDetail struct {
-	Timestamp time.Time  `json:"timestamp"`
-	LatencyMs int64      `json:"latency_ms"`
-	Source    string     `json:"source"`
-	AuthIndex string     `json:"auth_index"`
-	Tokens    tokenStats `json:"tokens"`
-	Failed    bool       `json:"failed"`
+	Timestamp       time.Time  `json:"timestamp"`
+	LatencyMs       int64      `json:"latency_ms"`
+	Source          string     `json:"source"`
+	AuthIndex       string     `json:"auth_index"`
+	ReasoningEffort string     `json:"reasoning_effort,omitempty"`
+	ServiceTier     string     `json:"service_tier,omitempty"`
+	ClientApp       string     `json:"client_app,omitempty"`
+	ClientUserAgent string     `json:"client_user_agent,omitempty"`
+	Tokens          tokenStats `json:"tokens"`
+	Failed          bool       `json:"failed"`
 }
 
 type tokenStats struct {
