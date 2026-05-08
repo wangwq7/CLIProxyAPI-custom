@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/thinking"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/usage"
 	"github.com/tidwall/gjson"
@@ -48,9 +50,9 @@ func NewUsageReporter(ctx context.Context, provider, model string, auth *cliprox
 		authType:    resolveUsageAuthType(auth),
 	}
 	requestMeta := usage.ClientRequestMetadataFromContext(ctx)
-	reporter.reasoningEffort = extractUsageReasoningEffort(requestMeta.RawJSON)
-	reporter.serviceTier = extractUsageServiceTier(requestMeta.RawJSON)
 	reporter.clientUserAgent = strings.TrimSpace(requestMeta.Headers.Get("User-Agent"))
+	reporter.reasoningEffort = extractUsageReasoningEffort(requestMeta.RawJSON)
+	reporter.serviceTier = extractUsageServiceTier(requestMeta.RawJSON, requestMeta.Headers)
 	reporter.clientApp = resolveUsageClientApp(
 		requestMeta.Headers.Get("X-CPA-Client-App"),
 		requestMeta.Headers.Get("X-Client-App"),
@@ -276,20 +278,73 @@ func extractUsageReasoningEffort(rawJSON []byte) string {
 			return value
 		}
 	}
+	if value := extractClaudeUsageReasoningEffort(root); value != "" {
+		return value
+	}
 	return ""
 }
 
-func extractUsageServiceTier(rawJSON []byte) string {
-	if len(rawJSON) == 0 || !gjson.ValidBytes(rawJSON) {
-		return ""
-	}
-	root := gjson.ParseBytes(rawJSON)
-	for _, path := range []string{"service_tier", "request.service_tier"} {
-		if value := strings.TrimSpace(root.Get(path).String()); value != "" {
-			return value
+func extractClaudeUsageReasoningEffort(root gjson.Result) string {
+	for _, prefix := range []string{"", "request."} {
+		thinkingNode := root.Get(prefix + "thinking")
+		if !thinkingNode.Exists() || !thinkingNode.IsObject() {
+			continue
+		}
+		thinkingType := strings.ToLower(strings.TrimSpace(thinkingNode.Get("type").String()))
+		switch thinkingType {
+		case "disabled":
+			return string(thinking.LevelNone)
+		case "adaptive", "auto":
+			if value := strings.ToLower(strings.TrimSpace(root.Get(prefix + "output_config.effort").String())); value != "" {
+				return value
+			}
+			return string(thinking.LevelXHigh)
+		case "enabled":
+			if budget := thinkingNode.Get("budget_tokens"); budget.Exists() {
+				if effort, ok := thinking.ConvertBudgetToLevel(int(budget.Int())); ok {
+					return effort
+				}
+			}
+			return string(thinking.LevelAuto)
 		}
 	}
 	return ""
+}
+
+func extractUsageServiceTier(rawJSON []byte, headers http.Header) string {
+	if len(rawJSON) != 0 && gjson.ValidBytes(rawJSON) {
+		root := gjson.ParseBytes(rawJSON)
+		for _, path := range []string{"service_tier", "request.service_tier"} {
+			if value := strings.TrimSpace(root.Get(path).String()); value != "" {
+				return value
+			}
+		}
+	}
+	if hasFastModeBeta(headers) {
+		return "fast"
+	}
+	return ""
+}
+
+func hasFastModeBeta(headers http.Header) bool {
+	if headers == nil {
+		return false
+	}
+	for _, value := range headers.Values("Anthropic-Beta") {
+		for _, part := range strings.Split(value, ",") {
+			if strings.Contains(strings.ToLower(strings.TrimSpace(part)), "fast-mode") {
+				return true
+			}
+		}
+	}
+	for _, value := range headers.Values("anthropic-beta") {
+		for _, part := range strings.Split(value, ",") {
+			if strings.Contains(strings.ToLower(strings.TrimSpace(part)), "fast-mode") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func resolveUsageClientApp(explicitValues ...string) string {

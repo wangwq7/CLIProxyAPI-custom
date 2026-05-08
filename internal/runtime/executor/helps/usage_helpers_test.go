@@ -164,6 +164,59 @@ func TestUsageReporterBuildRecordReadsNestedCodexReasoningEffort(t *testing.T) {
 	}
 }
 
+func TestUsageReporterBuildRecordReadsClaudeThinkingBudget(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("User-Agent", "claude-cli/2.1.128 (external, local-agent)")
+	ctx := usage.WithClientRequestMetadata(
+		context.Background(),
+		[]byte(`{"thinking":{"type":"enabled","budget_tokens":8192}}`),
+		headers,
+	)
+	reporter := NewUsageReporter(ctx, "codex", "gpt-5.5", nil)
+
+	record := reporter.buildRecord(usage.Detail{TotalTokens: 3}, false)
+	if record.ReasoningEffort != "medium" {
+		t.Fatalf("reasoning effort = %q, want medium", record.ReasoningEffort)
+	}
+	if record.ClientApp != "Claude Code" {
+		t.Fatalf("client app = %q, want Claude Code", record.ClientApp)
+	}
+}
+
+func TestUsageReporterBuildRecordReadsClaudeAdaptiveEffortAndFastMode(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("User-Agent", "claude-cli/2.1.128 (external, local-agent)")
+	headers.Set("Anthropic-Beta", "claude-code-20250219, fast-mode-2026-02-01")
+	ctx := usage.WithClientRequestMetadata(
+		context.Background(),
+		[]byte(`{"thinking":{"type":"adaptive"},"output_config":{"effort":"high"}}`),
+		headers,
+	)
+	reporter := NewUsageReporter(ctx, "codex", "gpt-5.5", nil)
+
+	record := reporter.buildRecord(usage.Detail{TotalTokens: 3}, false)
+	if record.ReasoningEffort != "high" {
+		t.Fatalf("reasoning effort = %q, want high", record.ReasoningEffort)
+	}
+	if record.ServiceTier != "fast" {
+		t.Fatalf("service tier = %q, want fast", record.ServiceTier)
+	}
+}
+
+func TestUsageReporterBuildRecordReadsNestedClaudeThinking(t *testing.T) {
+	ctx := usage.WithClientRequestMetadata(
+		context.Background(),
+		[]byte(`{"request":{"thinking":{"type":"disabled"}}}`),
+		nil,
+	)
+	reporter := NewUsageReporter(ctx, "codex", "gpt-5.5", nil)
+
+	record := reporter.buildRecord(usage.Detail{TotalTokens: 3}, false)
+	if record.ReasoningEffort != "none" {
+		t.Fatalf("reasoning effort = %q, want none", record.ReasoningEffort)
+	}
+}
+
 func TestUsageReporterBuildAdditionalModelRecordSkipsZeroTokens(t *testing.T) {
 	reporter := &UsageReporter{
 		provider:    "codex",
