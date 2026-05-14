@@ -44,14 +44,22 @@ type Handler struct {
 	localPassword       string
 	allowRemoteOverride bool
 	envSecret           string
+	serviceSecrets      []string
 	logDir              string
 	postAuthHook        coreauth.PostAuthHook
+}
+
+// HasServiceSecretConfigured reports whether a machine service token is available
+// through MANAGEMENT_SERVICE_TOKEN or MANAGEMENT_SERVICE_TOKEN_FILE.
+func HasServiceSecretConfigured() bool {
+	return len(loadServiceSecretsFromEnv()) > 0
 }
 
 // NewHandler creates a new management handler instance.
 func NewHandler(cfg *config.Config, configFilePath string, manager *coreauth.Manager) *Handler {
 	envSecret, _ := os.LookupEnv("MANAGEMENT_PASSWORD")
 	envSecret = strings.TrimSpace(envSecret)
+	serviceSecrets := loadServiceSecretsFromEnv()
 
 	h := &Handler{
 		cfg:                 cfg,
@@ -59,11 +67,41 @@ func NewHandler(cfg *config.Config, configFilePath string, manager *coreauth.Man
 		failedAttempts:      make(map[string]*attemptInfo),
 		authManager:         manager,
 		tokenStore:          sdkAuth.GetTokenStore(),
-		allowRemoteOverride: envSecret != "",
+		allowRemoteOverride: envSecret != "" || len(serviceSecrets) > 0,
 		envSecret:           envSecret,
+		serviceSecrets:      serviceSecrets,
 	}
 	h.startAttemptCleanup()
 	return h
+}
+
+func loadServiceSecretsFromEnv() []string {
+	var secrets []string
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		for _, existing := range secrets {
+			if existing == value {
+				return
+			}
+		}
+		secrets = append(secrets, value)
+	}
+
+	if value, ok := os.LookupEnv("MANAGEMENT_SERVICE_TOKEN"); ok {
+		add(value)
+	}
+	if filePath, ok := os.LookupEnv("MANAGEMENT_SERVICE_TOKEN_FILE"); ok {
+		filePath = strings.TrimSpace(filePath)
+		if filePath != "" {
+			if data, err := os.ReadFile(filePath); err == nil {
+				add(string(data))
+			}
+		}
+	}
+	return secrets
 }
 
 // startAttemptCleanup launches a background goroutine that periodically
@@ -245,7 +283,7 @@ func (h *Handler) AuthenticateManagementKey(clientIP string, localClient bool, p
 		h.attemptsMu.Unlock()
 	}
 
-	if secretHash == "" && envSecret == "" {
+	if secretHash == "" && envSecret == "" && len(h.serviceSecrets) == 0 {
 		return false, http.StatusForbidden, "remote management key not set"
 	}
 
@@ -266,6 +304,12 @@ func (h *Handler) AuthenticateManagementKey(clientIP string, localClient bool, p
 	if envSecret != "" && subtle.ConstantTimeCompare([]byte(provided), []byte(envSecret)) == 1 {
 		reset()
 		return true, 0, ""
+	}
+	for _, serviceSecret := range h.serviceSecrets {
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(serviceSecret)) == 1 {
+			reset()
+			return true, 0, ""
+		}
 	}
 
 	if secretHash == "" || bcrypt.CompareHashAndPassword([]byte(secretHash), []byte(provided)) != nil {

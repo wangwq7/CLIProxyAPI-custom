@@ -147,6 +147,30 @@ func TestManagementUsageRequiresManagementAuthAndPopsArray(t *testing.T) {
 	}
 }
 
+func TestManagementUsageAcceptsServiceToken(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "")
+	t.Setenv("MANAGEMENT_SERVICE_TOKEN", "test-service-token")
+	t.Setenv("MANAGEMENT_SERVICE_TOKEN_FILE", "")
+
+	prevQueueEnabled := redisqueue.Enabled()
+	redisqueue.SetEnabled(false)
+	t.Cleanup(func() {
+		redisqueue.SetEnabled(false)
+		redisqueue.SetEnabled(prevQueueEnabled)
+	})
+
+	server := newTestServer(t)
+	redisqueue.Enqueue([]byte(`{"id":10}`))
+
+	req := httptest.NewRequest(http.MethodGet, "/v0/management/usage-queue?count=1", nil)
+	req.Header.Set("Authorization", "Bearer test-service-token")
+	rr := httptest.NewRecorder()
+	server.engine.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("service token status = %d, want %d body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
 func TestAmpProviderModelRoutes(t *testing.T) {
 	testCases := []struct {
 		name         string

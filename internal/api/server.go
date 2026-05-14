@@ -176,7 +176,7 @@ type Server struct {
 	// managementRoutesEnabled controls whether management endpoints serve real handlers.
 	managementRoutesEnabled atomic.Bool
 
-	// envManagementSecret indicates whether MANAGEMENT_PASSWORD is configured.
+	// envManagementSecret indicates whether an environment-backed management secret is configured.
 	envManagementSecret bool
 
 	localPassword string
@@ -247,7 +247,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 
 	envAdminPassword, envAdminPasswordSet := os.LookupEnv("MANAGEMENT_PASSWORD")
 	envAdminPassword = strings.TrimSpace(envAdminPassword)
-	envManagementSecret := envAdminPasswordSet && envAdminPassword != ""
+	envManagementSecret := (envAdminPasswordSet && envAdminPassword != "") || managementHandlers.HasServiceSecretConfigured()
 
 	// Create server instance
 	s := &Server{
@@ -1038,7 +1038,7 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 	if s.envManagementSecret {
 		s.registerManagementRoutes()
 		if s.managementRoutesEnabled.CompareAndSwap(false, true) {
-			log.Info("management routes enabled via MANAGEMENT_PASSWORD")
+			log.Info("management routes enabled via environment/service secret")
 		} else {
 			s.managementRoutesEnabled.Store(true)
 		}
