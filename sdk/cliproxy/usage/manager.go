@@ -23,20 +23,31 @@ type Record struct {
 	RequestedAt time.Time
 	Latency     time.Duration
 	Failed      bool
+	Fail        Failure
 	Detail      Detail
 	ReasoningEffort string
 	ServiceTier     string
 	ClientApp       string
 	ClientUserAgent string
+	// ResponseHeaders stores a snapshot of upstream response headers for usage sinks.
+	ResponseHeaders http.Header
+}
+
+// Failure holds HTTP failure metadata for an upstream request attempt.
+type Failure struct {
+	StatusCode int
+	Body       string
 }
 
 // Detail holds the token usage breakdown.
 type Detail struct {
-	InputTokens     int64
-	OutputTokens    int64
-	ReasoningTokens int64
-	CachedTokens    int64
-	TotalTokens     int64
+	InputTokens         int64
+	OutputTokens        int64
+	ReasoningTokens     int64
+	CachedTokens        int64
+	CacheReadTokens     int64
+	CacheCreationTokens int64
+	TotalTokens         int64
 }
 
 type requestedModelAliasContextKey struct{}
